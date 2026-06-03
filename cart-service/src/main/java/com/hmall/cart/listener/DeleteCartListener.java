@@ -38,9 +38,6 @@ public class DeleteCartListener {
 
             // 2. 调用 service 执行清理
             cartService.removeByItemIds(itemIds);
-        } catch (Exception e) {
-            log.error("处理清理购物车消息失败", e);
-            // 这里根据需求决定是否抛出异常触发重试
         }
         finally {
             UserContext.removeUser();

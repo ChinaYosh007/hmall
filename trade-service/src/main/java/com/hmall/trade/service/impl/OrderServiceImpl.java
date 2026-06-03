@@ -3,11 +3,14 @@ package com.hmall.trade.service.impl;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmall.api.client.CartClient;
 import com.hmall.api.client.ItemClient;
+import com.hmall.api.client.PayClient;
 import com.hmall.api.dto.ItemDTO;
 import com.hmall.api.dto.OrderDetailDTO;
+import com.hmall.api.dto.PayOrderDTO;
 import com.hmall.common.exception.BadRequestException;
 import com.hmall.common.exception.BizIllegalException;
 import com.hmall.common.utils.UserContext;
+import com.hmall.trade.constants.MQConstans;
 import com.hmall.trade.domain.dto.OrderFormDTO;
 import com.hmall.trade.domain.po.Order;
 import com.hmall.trade.domain.po.OrderDetail;
@@ -41,6 +44,7 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private final IOrderDetailService detailService;
     private final CartClient cartClient;
     private final RabbitTemplate rabbitTemplate;
+    private final PayClient payClient;
 
     @Override
     @Transactional
@@ -91,7 +95,42 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
             log.error("清理购物车消息发送失败，订单ID: {}", order.getId(), e);
         }
         log.info("订单创建成功，订单ID: {}, 用户ID: {}", order.getId(), UserContext.getUser());
+        try {
+            rabbitTemplate.convertAndSend(MQConstans.EXCHANGE_NAME, MQConstans.DELAY_ORDER_KEY, order.getId(), message -> {
+                message.getMessageProperties().setDelayLong(15 * 60 * 1000L); // 15 分钟
+                return message;
+            });
+        } catch (Exception e) {
+            log.error("发送延迟关单消息失败，订单ID: {}", order.getId(), e);
+        }
         return order.getId();
+    }
+
+    @Override
+    public void cancelOrder(Long orderId) {
+        Order order = getById(orderId);
+        if (order == null || order.getStatus() != 1) return;
+
+        PayOrderDTO payOrderDTO = payClient.queryPayOrderByBizOrderNo(orderId);
+        if (payOrderDTO != null && payOrderDTO.getStatus() == 3) {
+           markOrderPaySuccess(orderId);
+        }
+        else
+        {
+            /**
+             * 1. 更新订单状态为取消
+             * 2.更新库存
+             */
+            lambdaUpdate()
+                    .set(Order::getStatus, 5)
+                    .set(Order::getCloseTime, LocalDateTime.now())
+                    .eq(Order::getId, orderId)
+                    .eq(Order::getStatus, 1)
+                    .update();
+
+        }
+
+        log.info("订单超时关闭，订单ID: {}", orderId);
     }
 
     @Override
