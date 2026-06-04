@@ -1,5 +1,6 @@
 package com.hmall.common.config;
 
+import com.hmall.common.utils.RabbitMqHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
@@ -17,6 +18,10 @@ public class MQConfig {
     @Bean
     public MessageConverter rabbitMQConfig() {
         return new Jackson2JsonMessageConverter();
+    }
+    @Bean
+    public RabbitMqHelper rabbitMqHelper(RabbitTemplate rabbitTemplate) {
+        return new RabbitMqHelper(rabbitTemplate);
     }
 
     @Bean

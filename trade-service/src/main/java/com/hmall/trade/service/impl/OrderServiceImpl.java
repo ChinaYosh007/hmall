@@ -8,7 +8,7 @@ import com.hmall.api.dto.ItemDTO;
 import com.hmall.api.dto.OrderDetailDTO;
 import com.hmall.api.dto.PayOrderDTO;
 import com.hmall.common.exception.BadRequestException;
-import com.hmall.common.exception.BizIllegalException;
+import com.hmall.common.utils.RabbitMqHelper;
 import com.hmall.common.utils.UserContext;
 import com.hmall.trade.constants.MQConstans;
 import com.hmall.trade.domain.dto.OrderFormDTO;
@@ -19,10 +19,8 @@ import com.hmall.trade.service.IOrderDetailService;
 import com.hmall.trade.service.IOrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -43,8 +41,8 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
     private final ItemClient itemClient;
     private final IOrderDetailService detailService;
     private final CartClient cartClient;
-    private final RabbitTemplate rabbitTemplate;
     private final PayClient payClient;
+    private final RabbitMqHelper rabbitMqHelper;
 
     @Override
     @Transactional
@@ -81,29 +79,17 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         List<OrderDetail> details = buildDetails(order.getId(), items, itemNumMap);
         detailService.saveBatch(details);
 
-        try {
+
             // 3.1 准备消息体：必须包含 userId，因为异步线程拿不到 ThreadLocal
             Map<String, Object> msg = new HashMap<>();
             msg.put("userId", UserContext.getUser());
             msg.put("itemIds", itemIds);
             // 3.2 发送消息
             // 参数1：交换机名称；参数2：RoutingKey；参数3：消息内容
-            rabbitTemplate.convertAndSend("trade.topic", "order.create", msg);
-            log.info("发送清理购物车消息成功，订单ID: {}", order.getId());
-        } catch (Exception e) {
-            // MQ 发送失败不应该导致下单失败，所以这里记录日志即可（或者记录本地表后续重试）
-            log.error("清理购物车消息发送失败，订单ID: {}", order.getId(), e);
-        }
-        log.info("订单创建成功，订单ID: {}, 用户ID: {}", order.getId(), UserContext.getUser());
-        try {
-            rabbitTemplate.convertAndSend(MQConstans.EXCHANGE_NAME, MQConstans.DELAY_ORDER_KEY, order.getId(), message -> {
-                message.getMessageProperties().setDelayLong(15 * 60 * 1000L); // 15 分钟
-                return message;
-            });
-        } catch (Exception e) {
-            log.error("发送延迟关单消息失败，订单ID: {}", order.getId(), e);
-        }
-        return order.getId();
+            rabbitMqHelper.sendMessage("trade.topic", "order.create", msg);
+             // 4.发送延迟消息
+            rabbitMqHelper.sendDelayMessage(MQConstans.EXCHANGE_NAME,MQConstans.DELAY_ORDER_KEY,order.getId(), 15 * 60 * 1000L);
+            return order.getId();
     }
 
     @Override
@@ -117,17 +103,29 @@ public class OrderServiceImpl extends ServiceImpl<OrderMapper, Order> implements
         }
         else
         {
-            /**
-             * 1. 更新订单状态为取消
-             * 2.更新库存
-             */
+            // 1. 更新订单状态为取消
             lambdaUpdate()
                     .set(Order::getStatus, 5)
                     .set(Order::getCloseTime, LocalDateTime.now())
                     .eq(Order::getId, orderId)
                     .eq(Order::getStatus, 1)
                     .update();
-
+            // 2. 清理购物车（兜底：防止下单时 MQ 清购物车消息发送失败）
+            // cancelOrder 由 MQ 消费者触发，无 HTTP 上下文，需手动设置 UserContext
+            // 否则 Feign 不携带 user-info 头，cart-service 以 null userId 过滤，静默删除失败
+            List<OrderDetail> details = detailService.lambdaQuery()
+                    .eq(OrderDetail::getOrderId, orderId).list();
+            if (!details.isEmpty()) {
+                Set<Long> itemIds = details.stream()
+                        .map(OrderDetail::getItemId)
+                        .collect(Collectors.toSet());
+                UserContext.setUser(order.getUserId());
+                try {
+                    cartClient.deleteCartItemByIds(itemIds);
+                } finally {
+                    UserContext.removeUser();
+                }
+            }
         }
 
         log.info("订单超时关闭，订单ID: {}", orderId);

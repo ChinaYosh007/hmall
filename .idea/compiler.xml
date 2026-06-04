@@ -20,6 +20,7 @@
     </annotationProcessing>
     <bytecodeTargetLevel target="21">
       <module name="hm-gateway" target="21" />
+      <module name="publisher" target="21" />
       <module name="trade-server" target="21" />
     </bytecodeTargetLevel>
   </component>
@@ -32,6 +33,7 @@
       <module name="hm-service" options="-parameters" />
       <module name="item-service" options="-parameters" />
       <module name="pay-service" options="-parameters" />
+      <module name="publisher" options="-parameters" />
       <module name="trade-service" options="-parameters" />
       <module name="user-service" options="-parameters" />
     </option>

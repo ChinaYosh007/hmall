@@ -9,18 +9,40 @@ import org.springframework.stereotype.Component;
 @Slf4j
 @RequiredArgsConstructor
 public class RabbitMqHelper {
-
     private final RabbitTemplate rabbitTemplate;
 
-    public void sendMessage(String exchange, String routingKey, Object msg){
+    public void sendMessage(String exchange, String routingKey, Object msg)
+    {
+        try {
+            rabbitTemplate.convertAndSend(exchange, routingKey, msg);
+        } catch (Exception e) {
+            log.error("exchange : {}, routingKey : {}, msg : {}", exchange, routingKey, msg, e);
+        }
 
     }
 
-    public void sendDelayMessage(String exchange, String routingKey, Object msg, int delay){
+    public   void sendDelayMessage(String exchange, String routingKey, Object msg, long  delay){
+        try {
+            rabbitTemplate.convertAndSend(exchange, routingKey, msg, message -> {
+                message.getMessageProperties().setDelayLong(delay);
+                return message;
+            });
+        } catch (Exception e) {
+            log.error("exchange : {}, routingKey : {}, msg : {}", exchange, routingKey, msg, e);
+        }
 
     }
 
-    public void sendMessageWithConfirm(String exchange, String routingKey, Object msg, int maxRetries){
-
+    public  void sendMessageWithConfirm(String exchange, String routingKey, Object msg, int maxRetries){
+        int current = 0;
+        while (current++ < maxRetries) {
+            try {
+                rabbitTemplate.convertAndSend(exchange, routingKey, msg);
+                return;
+            } catch (Exception e) {
+                log.warn("exchange : {}, routingKey : {}, msg : {}", exchange, routingKey, msg, e);
+            }
+        }
+        log.error("消息发送失败，已达最大重试次数, exchange : {}, routingKey : {}, msg : {}, maxRetries : {}", exchange, routingKey, msg, maxRetries);
     }
 }
