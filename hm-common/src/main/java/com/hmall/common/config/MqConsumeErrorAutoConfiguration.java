@@ -43,6 +43,4 @@ public class MqConsumeErrorAutoConfiguration  {
     public RepublishMessageRecoverer republishMessageRecoverer(RabbitTemplate rabbitTemplate) {
         return new RepublishMessageRecoverer(rabbitTemplate, EXCHANGE_NAME, appName);
     }
-
-
 }

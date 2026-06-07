@@ -2,6 +2,7 @@ package com.hmall.common.utils;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.MessagePostProcessor;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
@@ -22,11 +23,14 @@ public class RabbitMqHelper {
     }
 
     public   void sendDelayMessage(String exchange, String routingKey, Object msg, long  delay){
+        MessagePostProcessor messagePostProcessor = message ->
+        {
+//            message.getMessageProperties().setExpiration(String.valueOf(delay));
+            message.getMessageProperties().setDelayLong( delay);
+            return message;
+        };
         try {
-            rabbitTemplate.convertAndSend(exchange, routingKey, msg, message -> {
-                message.getMessageProperties().setDelayLong(delay);
-                return message;
-            });
+            rabbitTemplate.convertAndSend(exchange, routingKey, msg, messagePostProcessor);
         } catch (Exception e) {
             log.error("exchange : {}, routingKey : {}, msg : {}", exchange, routingKey, msg, e);
         }
